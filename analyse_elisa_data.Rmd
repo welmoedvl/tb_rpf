@@ -1,0 +1,1340 @@
+---
+title: "Analysis RPFs childhood TB"
+author: "Welmoed van Loon"
+date: "2 Dec 2018"
+classoption: table
+output: pdf_document
+---
+
+# Prepare session
+```{r setup, echo = TRUE, message = F, warning = F}
+
+## Prepare session:
+
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+options(kableExtra.latex.load_packages = FALSE)
+
+library(ROCR)
+library(data.table)
+library(MASS)
+library(nnet)
+library(kableExtra)
+library(ggbeeswarm)
+library(tidyverse)
+
+setwd("C:/Users/W.A/Desktop/tb_rpf_childhood/analysis_elisa")
+df_complete <- fread("data_elisa_prepared.csv") 
+
+# for the plotting:
+cutoff_igra <- 124.2298
+
+```
+\pagebreak
+
+# Demographics
+```{r Demographics}
+
+# Function for a summary per data subset:
+func_summ_demogr <- function(data){
+  
+  df_all <- data %>%
+    filter(stimulant == "MED") %>%
+    summarize(n = n(),
+              n_tst = sum(!is.na(TST), na.rm = T),
+              n_tst_pos = sum(TST == 1, na.rm = T),
+              n_tst_neg = sum(TST == 0, na.rm = T),
+              n_igra = sum(!is.na(IGRA), na.rm = T),                            
+              n_igra_pos = sum(IGRA == 1, na.rm = T),
+              n_igra_neg = sum(IGRA == 0, na.rm = T),
+              mean_age_years = mean(age_years, na.rm = T),
+              min_age_years = min(age_years, na.rm = T),
+              max_age_years = max(age_years, na.rm = T),
+              min_age_months = min(age_months, na.rm = T),
+              max_age_months = max(age_months, na.rm = T),
+              median_age_years = median(age_years, na.rm = T),
+              iqr1 = quantile(age_years, na.rm = T)[[2]],
+              iqr2 = quantile(age_years, na.rm = T)[[4]]) %>%
+    t() %>% as.data.frame() 
+}
+
+# Generate df's per data subset to summarize:
+df_all <- func_summ_demogr(df_complete)
+  
+data <- filter(df_complete, sex == "Female")
+df_F <- func_summ_demogr(data)
+  
+data <- filter(df_complete, sex == "Male")
+df_M <- func_summ_demogr(data)
+
+data <- filter(df_complete, age_years < 5)
+df_infant <- func_summ_demogr(data)
+
+cbind(df_all, df_F, df_M, df_infant) %>%
+  setNames(c("all", "females", "males", "infants"))
+
+```
+\pagebreak
+
+# TST and IGRA results (frequencies and proportions)
+```{r TST and IGRA results}
+
+# In non-tb cases only:
+
+data <- df_complete %>%
+   filter(stimulant == "MED", conf_tb == 0)
+# NOTE that not all 0's recieved a TST test!
+# First was screening for symptoms, 
+# Symptomatic children did NOT receive a TST test,
+# but among these 0's, later turned out that some of them 
+# did not have TB disease. 
+# They never got the TST after that, but they did receive an IGRA.
+
+ # TST (N)
+ data %>% 
+   select(TST) %>%
+   table(useNA = "ifany") %>%
+    addmargins()
+ 
+ # TST (%)
+ data %>% 
+   select(TST) %>%
+   table() %>%
+   prop.table()
+ 
+ # IGRA (N)
+ data %>% 
+   select(IGRA) %>%
+   table(useNA = "ifany") %>%
+   addmargins()
+
+ # IGRA (%)
+ data %>% 
+   select(IGRA) %>%
+   table() %>%
+   prop.table()
+ 
+ # IGRA_TST_double (N)
+ data %>%
+   select(IGRA, TST) %>%
+   table(useNA = "ifany") %>%
+   addmargins()
+ 
+ # IGRA_TST_double (%)
+ data %>%
+   select(IGRA, TST) %>%
+   table() %>%
+   prop.table()
+
+ 
+# TB cases:
+ 
+ # (N)
+ df_complete %>%
+   filter(stimulant == "MED") %>%
+   select(conf_tb) %>%
+   table(useNA = "ifany") %>%
+   addmargins()
+ 
+ # (%)
+ df_complete %>%
+   filter(stimulant == "MED") %>%
+   select(conf_tb) %>%
+   table() %>%
+   prop.table()
+
+```
+\pagebreak
+
+# Characteristics of child contacts
+```{r Characteristics table}
+
+df_complete %>%
+  filter(stimulant == "MED") %>%
+  summarize(n = n(),
+            
+            age_median = median(age_years, na.rm = T),
+            age_iqr_25 = quantile(age_years, na.rm = T)[2],
+            age_iqr_75 = quantile(age_years, na.rm = T)[4],
+            
+            female_n = sum(sex == "Female", na.rm = T),
+            female_p = sum(sex == "Female", na.rm = T)/sum(!is.na(sex))*100,
+            
+            sympt_n = sum(symptomatic == 1, na.rm = T),
+            sympt_p = sum(symptomatic == 1, na.rm = T)/sum(!is.na(symptomatic))*100,
+            
+            age_b5_n = sum(age_years < 5, na.rm = T),
+            age_b5_p = sum(age_years < 5, na.rm = T)/sum(!is.na(age_years))*100,
+            
+            bcg_n = sum(!is.na(bcg)),
+            bcgpos_n = sum(bcg == "1 Yes", na.rm = T),
+            bcgpos_p = sum(bcg == "1 Yes", na.rm = T)/sum(!is.na(bcg))*100,
+            
+            tst_n = sum(!is.na(TST)),
+            tstpos_n = sum(TST == 1, na.rm = T),
+            tstpos_p = sum(TST == 1, na.rm = T)/sum(!is.na(TST))*100,
+            
+            igrapos_n = sum(conf_tb == 0 & IGRA == 1, na.rm = T),
+            igrapos_p = sum(conf_tb == 0 & IGRA == 1, na.rm = T)/sum(conf_tb == 0 & !is.na(IGRA))*100,
+            
+            tstigra_n = sum(!is.na(IGRA_TST_double)),
+            tstigrapos_n = sum(IGRA_TST_double == 1, na.rm = T),
+            tstigrapos_p = sum(IGRA_TST_double == 1, na.rm = T)/sum(!is.na(IGRA_TST_double))*100,
+            tstigraneg_n = sum(IGRA_TST_double == 0, na.rm = T),
+            tstigraneg_p = sum(IGRA_TST_double == 0, na.rm = T)/sum(!is.na(IGRA_TST_double))*100,
+            
+            indexcase_n = sum(!is.na(relation_indexcase)),
+            indexcase_child_n = sum(relation_indexcase == "13 Child", na.rm = T),
+            indexcase_child_p = sum(relation_indexcase == "13 Child", na.rm = T)/sum(!is.na(relation_indexcase))*100,
+            indexcase_sibl_n = sum(relation_indexcase == "14 Sibling", na.rm = T),
+            indexcase_sibl_p = sum(relation_indexcase == "14 Sibling", na.rm = T)/sum(!is.na(relation_indexcase))*100,
+            indexcase_other_n = sum(relation_indexcase == "61 Other relation", na.rm = T),
+            indexcase_other_p = sum(relation_indexcase == "61 Other relation", na.rm = T)/sum(!is.na(relation_indexcase))*100,
+            indexcase_notrel_n = sum(relation_indexcase == "76 Not related", na.rm = T),
+            indexcase_notrel_p = sum(relation_indexcase == "76 Not related", na.rm = T)/sum(!is.na(relation_indexcase))*100,
+            
+            conf_tb_n = sum(conf_tb == 1, na.rm = T),
+            conf_tb_p = sum(conf_tb == 1, na.rm = T)/sum(!is.na(IGRA))*100,
+            
+            bact_n = sum(!is.na(bact)),
+            bactpos_n = sum(bact == 1, na.rm = T),
+            bactpos_p = sum(bact == 1, na.rm = T)/sum(!is.na(bact) & !is.na(IGRA))*100,
+            
+            clin_tb_n = sum(conf_tb == 3, na.rm = T),
+            clin_tb_p = sum(conf_tb == 3, na.rm = T)/sum(!is.na(conf_tb) & !is.na(IGRA))*100) %>%
+  t()
+```
+\pagebreak
+
+# Age and sex vs TST, IGRA and TB disease
+
+## Functions
+```{r Function to summarize age and sex per infection class}
+
+# Function to make summary per infection class:
+
+  func_summ <- function(data, infection_class){
+    
+    df_summ <- data %>% 
+      filter(stimulant == "MED") %>%
+      group_by_(infection_class) %>%
+      filter(!is.na(get(infection_class))) %>%
+      summarize(n = n(),
+                n_female = sum(sex == "Female", na.rm = T),
+                mean_age = mean(age_years, na.rm = T),
+                median_age = median(age_years, na.rm = T),
+                iqr1 = quantile(age_years, na.rm = T)[[2]],
+                iqr2 = quantile(age_years, na.rm = T)[[4]]) %>%
+      as.data.frame() %>%
+      column_to_rownames(infection_class) %>%
+      t()
+    
+    return(df_summ)
+  }
+
+```
+\pagebreak
+
+## Results - summary
+```{r Summarize sex vs TST and IGRA}
+
+## Summarize data per infection class:
+
+  # TST:
+  func_summ(data = df_complete, infection_class = "TST")
+
+  # IGRA:
+  func_summ(data = df_complete %>% filter(conf_tb == 0), 
+            infection_class = "IGRA")
+  
+  # double:
+  func_summ(data = df_complete, infection_class = "IGRA_TST_double")
+  
+  # confirmed tb 3 classes:
+  func_summ(data = df_complete, infection_class = "conf_tb")
+  
+  # tb disease:
+  func_summ(data = df_complete, infection_class = "tb_vs_notb")
+
+```
+\pagebreak
+
+## Results - anova & fisher.test
+```{r Analyze age and sex vs TST and IGRA}
+
+## Mann-withney-U age vs. sex:
+
+  df_complete %>%
+    filter(stimulant == "MED") %>%
+    wilcox.test(age_years ~ sex , data = .) 
+
+
+## Mann-withney-U test age vs. infection class:
+  
+  # IGRA vs age:
+  df_complete %>%
+    filter(stimulant == "MED") %>%
+    filter(conf_tb == 0) %>%
+    wilcox.test(age_years ~ IGRA , data = .) 
+  
+  # TST vs age:
+  df_complete %>%
+    filter(stimulant == "MED") %>%
+    wilcox.test(age_years ~ TST , data = .) 
+  
+  # IGRA_TST_double vs age:
+  df_complete %>%
+    filter(stimulant == "MED") %>%
+    wilcox.test(age_years ~ IGRA_TST_double , data = .)
+  
+  # TB vs. age:
+  df_complete %>%
+    filter(stimulant == "MED") %>%
+    wilcox.test(age_years ~ tb_vs_notb , data = .)
+  
+  
+## FISHER-test Sex vs IGRA and TST:
+
+  # IGRA vs sex:
+  tbl <- df_complete %>% 
+    filter(stimulant == "MED") %>%
+    select(IGRA, sex) %>%
+    table()
+  tbl
+  fisher.test(tbl, conf.int = T) 
+
+  # TST vs sex:
+  tbl <- df_complete %>% 
+    filter(stimulant == "MED") %>%
+    select(TST, sex) %>%
+    table()
+  tbl
+  fisher.test(tbl, conf.int = T)
+  
+  # IGRA_TST_double vs sex:
+  tbl <- df_complete %>% 
+    filter(stimulant == "MED") %>%
+    select(IGRA_TST_double, sex) %>%
+    table()
+  tbl
+  fisher.test(tbl, conf.int = T)
+  
+  # TB vs sex:
+  tbl <- df_complete %>% 
+    filter(stimulant == "MED") %>%
+    select(tb_vs_notb, sex) %>%
+    table()
+  tbl
+  fisher.test(tbl, conf.int = T)
+  
+
+```
+\pagebreak
+
+
+# IGRA vs. TST
+
+## Results - anova & fisher.test
+```{r Analyse IGRA vs. TST}
+
+## Anova IGRA vs TST:
+
+  df_complete %>%
+    filter(stimulant == "ECfus") %>%
+    lm(TST ~ IFNy, data = .) %>% 
+    anova()
+
+
+## Mann Withney U-test IGRA vs TST:
+
+  df_complete %>%
+    filter(stimulant == "ECfus") %>%
+    wilcox.test(IFNy ~ TST, data = .) 
+
+
+## FISHER.test IGRA vs TST:
+
+  tbl <- df_complete %>% 
+    filter(stimulant == "MED") %>%
+    select(IGRA, TST) %>%
+    table()
+  tbl
+  fisher.test(tbl, conf.int = T)
+  
+  
+## Plot:
+  
+  # Simplest version, excluding NA's
+  df_complete %>% 
+    filter(stimulant == "ECfus",
+           !is.na(TST), !is.na(IGRA)) %>%
+    mutate(TST = as.character(TST),
+           # for prettier x-axis in plot:
+           TST = ifelse(TST == "0", "TST-", 
+                        ifelse(TST == "1", "TST+", NA)),
+           # add 1 to every continous value
+           # to handle the zero's on the log10 axis:
+           IFNy_EC = IFNy_EC + 1) %>%
+    
+    ggplot(aes(x = TST, y = IFNy_EC)) +
+      stat_summary(fun.y = median, fun.ymin = median, fun.ymax = median,
+                   geom = "crossbar", width = 0.5, size = 0.3) +
+      geom_quasirandom(cex = 3, alpha = 3/4, size = 1) +
+      labs(shape = "",
+           x = "", 
+           y = "IFN-y concentration pg/ml\nafter ECfusion protein stimulation",
+           title = "") +
+      scale_y_log10(breaks = (c(10, 100, 1000, 10000))) +
+      theme_light()
+
+
+  # with NA's: 
+  df_complete %>% 
+    filter(stimulant == "ECfus", !is.na(IGRA)) %>%
+    mutate(TST = as.character(TST),
+           # for prettier x-axis in plot:
+           TST = ifelse(TST == "0", "TST-", 
+                        ifelse(TST == "1", "TST+", NA)),
+           # add 1 to every continous value
+           # to handle the zero's on the log10 axis:
+           IFNy_EC = IFNy_EC + 1) %>%
+    
+    ggplot(aes(x = TST, y = IFNy_EC)) +
+      stat_summary(fun.y = median, fun.ymin = median, fun.ymax = median,
+                   geom = "crossbar", width = 0.5, size = 0.3) +
+      geom_hline(yintercept = cutoff_igra, linetype = 2, color = "darkgrey") +
+      geom_quasirandom(cex = 2, alpha = 3/4, size = 1) +
+      labs(shape = "",
+           x = "", 
+           y = "IFN-y concentration pg/ml\nafter ECfusion protein stimulation",
+           title = "") +
+      scale_y_log10(breaks = (c(10, 100, 1000, 10000))) +
+      theme_light()
+  
+  
+ # with confirmed cases and probable cases:  
+ df_complete %>% 
+    filter(stimulant == "ECfus") %>%
+    mutate(tst_conf = ifelse(conf_tb == 1, "conf",
+                             ifelse(conf_tb == 3, "prob",
+                                    ifelse(TST == 1, "TST+",
+                                           ifelse(TST == 0, "TST-", NA)))),
+           # add 1 to every continous value
+           # to handle the zero's on the log10 axis:
+           IFNy_EC = IFNy_EC + 1) %>%
+   
+    ggplot(aes(x = tst_conf, y = IFNy_EC)) +
+      stat_summary(fun.y = median, fun.ymin = median, fun.ymax = median,
+                   geom = "crossbar", width = 0.5, size = 0.3) +
+      geom_hline(yintercept = cutoff_igra, linetype = 2, color = "darkgrey") +
+      geom_quasirandom(cex = 2, alpha = 3/4, size = 1) +
+      labs(x = "", y = "IFN-y concentration pg/ml\nafter ECfusion protein stimulation",
+           title = "") +
+      scale_y_log10() +
+      theme_light()
+
+```
+\pagebreak
+
+
+# IFN-y per stimulant, per infecion class:
+
+## Functions
+```{r Functions to summarize IFNy per stimulant per infection class}
+
+## Functions to summarize IFNy per stimulatn per infection class:
+  
+  # For 1 stimulant
+
+func_summ_ifny_1row <- function(data, stim, var_predict, var_respons){
+  
+  df_summ <- data %>%
+    filter(stimulant == stim & !is.na(get(var_respons))) %>%
+    select(!!var_respons, !!var_predict) %>%
+    group_by_(var_respons) %>%
+    summarize(n = n(), 
+              median = exp(median(get(var_predict), na.rm = T))-1, # exp()-1 to correct for the log IFNy-conc.
+              iqr25 = exp(quantile(get(var_predict), na.rm = T)[2])-1,    # exp()-1 to correct for the log IFNy-conc.
+              iqr75 = exp(quantile(get(var_predict), na.rm = T)[4])-1) %>%  # exp()-1 to correct for the log IFNy-conc.
+    mutate(stimulant = rep(stim)) %>%
+    as.data.frame() %>%
+    reshape(idvar = "stimulant", timevar = var_respons, direction = "wide") 
+  
+  return(df_summ)
+}
+
+
+# Paste all stimulants as rows below each other
+# and add a datatable to publish:
+func_summ_ifny <- function(data, var_predict, var_respons){
+    
+  stims <- c("ECfus", "ECpep", "PHA", "MED", 
+             "RpfA", "RpfB", "RpfC", "RpfD", "RpfE")
+  
+  df_summ <- func_summ_ifny_1row(data, stim = stims[1], var_predict, var_respons)
+  
+  for(i in 2:length(stims)){
+    stim_i    <- stims[i]
+    df_summ_i <- func_summ_ifny_1row(data, stim = stim_i, var_predict, var_respons)
+    df_summ   <- full_join(df_summ, df_summ_i)
+  }
+  
+  df_summ <- df_summ %>% mutate_if(is.numeric, signif, 3)
+  
+  # make nice output table for direct copy+paste for publishing
+  # for now; only numeric classification of 0,1 or 0,2,1 is possible):
+  
+  if(length(unique(na.omit(data[,get(var_respons)]))) == 2){
+    
+    df_summ_publ <- df_summ %>%
+      filter(stimulant %in% c("MED", "PPD", "RpfA", "RpfB", "RpfC", "RpfD", "RpfE")) %>%
+      select(contains("stimulant"), contains("median"), contains("iqr")) %>%
+      mutate(`infection_0` = paste(median.0, " (", iqr25.0, "-", iqr75.0, ")", sep = ""),
+             `infection_1` = paste(median.1, " (", iqr25.1, "-", iqr75.1, ")", sep = "")) %>%
+      select(stimulant, infection_0, infection_1) %>%
+      kable()
+  }
+    
+    if(length(unique(na.omit(data[,get(var_respons)]))) == 3){
+      
+      df_summ_publ <- df_summ %>%
+        filter(stimulant %in% c("MED", "RpfA", "RpfB", "RpfC", "RpfD", "RpfE")) %>%
+        select(contains("stimulant"), contains("median"), contains("iqr")) %>%
+        mutate(`infection_0` = paste(median.0, " (", iqr25.0, "-", iqr75.0, ")", sep = ""),
+               `infection_1` = paste(median.1, " (", iqr25.1, "-", iqr75.1, ")", sep = ""),
+               `infection_3` = paste(median.2, " (", iqr25.2, "-", iqr75.2, ")", sep = "")) %>%
+        select(stimulant, infection_0, infection_1, infection_3) %>%
+        kable()
+    }
+    
+    lst_summ <- list(all_details = df_summ, selection_for_publish = df_summ_publ)
+    
+    return(lst_summ)
+}
+  
+```
+\pagebreak
+
+```{r Functions for log. regression and ANOVA IFNy per stimulant per infection class}  
+
+## Function to make binomial glm-model per stimulant:
+  
+  func_glm <- function(data, stim, var_predict, var_respons){
+    
+    df <- data %>%
+      filter(stimulant == stim) %>%
+      select(-IFNy) %>% # there is a column called IFNy already; remove it
+      rename(IFNy = !!var_predict, infection = !!var_respons)
+    
+    model <- tryCatch(
+      glm(infection ~ IFNy + age_years + sex, data = df, family = "binomial"),
+      error = function(e) NULL)
+      
+    return(model)
+  }
+
+
+## Function to make lineair anova model per stimulant:
+  
+  func_anov <- function(data, stim, var_predict, var_respons){
+    
+    df <- data %>%
+      filter(stimulant == stim) %>%
+      select(-IFNy) %>% # there is a column called IFNy already; remove it
+      rename(IFNy = !!var_predict, infection = !!var_respons) %>%
+      mutate(infection = as.factor(infection))
+    
+    model <- lm(IFNy ~ infection, data = df)
+    
+    return(model)
+    
+  }
+
+  
+```
+\pagebreak
+
+```{r Functions for nice output of model results}
+
+## Functions to generate nice output from the models
+## (first per stimulant, then in a list for all stimulants):
+  
+  # Binomial lgm model
+  # 1 stimulant
+func_glm_output_1stim <- function(data, stim, var_predict, var_respons){
+  
+  df_summ <- func_summ_ifny_1row(data, stim, var_predict, var_respons)
+  model   <- func_glm(data, stim, var_predict, var_respons)
+  
+  results_df <- tryCatch(
+    
+    # Because sometimes a perfect fit occurs 
+    # (for example in IGRA ~ ECfus response),
+    # the glm is not possible.
+    # Use tryCatch and print NULL in that case:
+    
+      cbind(
+        OR = exp(coef(model)), # exp to make log odds -> odds
+        exp(confint(model)),      # exp to make log odds -> odds
+        p = summary(model)$coefficients[,4]) %>%
+      as.data.frame() %>%
+      rownames_to_column() %>%
+      rename(coeff = "rowname",
+             CI_2.5 = "2.5 %",
+             CI_97.5 = "97.5 %") %>%
+      mutate(n = length(fitted(model)),
+             stimulant = rep(stim)) %>%
+      full_join(df_summ, by = "stimulant") %>%
+      select(stimulant, n, coeff, OR, CI_2.5, CI_97.5, p, 
+             n.0, median.0, iqr25.0, iqr75.0, n.1, median.1, iqr25.1, iqr75.1),
+    
+    error = function(e) NULL
+    
+  )
+  
+  return(results_df)
+}
+  
+  # Binomial lgm model
+  # Paste all stimulants as list element in one list
+func_glm_output <- function(data, var_predict, var_respons) {
+  
+  stims <- c("MED", "PHA", "PPD", "ECfus", "ECpep",
+             "RpfA", "RpfB", "RpfC", "RpfD", "RpfE")
+  
+  lst <- lapply(X = stims, FUN = func_glm_output_1stim, data = data, 
+                var_predict = var_predict, var_respons = var_respons)
+  
+  names(lst) <- stims
+  
+  df_selection_for_publish <- lst %>%
+    rbindlist() %>%
+    filter(coeff == "IFNy",
+           stimulant %in% c("MED", "PPD","RpfA", "RpfB", 
+                            "RpfC", "RpfD", "RpfE")) %>%
+    mutate_at(c("OR", "CI_2.5", "CI_97.5", 
+                "median.0", "iqr25.0", "iqr75.0","median.1", "iqr25.1", "iqr75.1"),
+              formatC, format = 'f', digits = 1) %>% # use formatC to keep the trailing 0's, if present (round() does not do that)
+    mutate(or_ci = paste(OR, " (", CI_2.5, "-", CI_97.5, ")", sep = ""),
+           med_iqr_0 = paste(median.0, " [", iqr25.0, "-", iqr75.0, "]", sep = ""),
+           med_iqr_1 = paste(median.1, " [", iqr25.1, "-", iqr75.1, "]", sep = "")) %>%
+    select(stimulant, n, n.0, med_iqr_0, n.1, med_iqr_1, p) %>%
+    kable()
+  
+  lst$selection_for_publish <- df_selection_for_publish
+  
+  return(lst)
+  
+} 
+
+
+```
+\pagebreak
+
+```{r Functions to plot IFNy per stimulant}
+
+## Functions to plot:
+
+  # Binomial infection classification:
+  func_plot_jitter <- function(data, var_predict, var_respons){
+      
+      # prepare df:
+      df <- data %>%
+        select(-IFNy) %>% # there is a column called IFNy already; remove it
+        rename(IFNy = !!var_predict, infection = !!var_respons) %>%
+        mutate(infection = as.factor(infection),
+               # add 1 to IFNy value
+               # to handle the zero's on the log10 axis:
+               IFNy = IFNy + 1) %>%
+        filter(!is.na(infection) & !is.na(stimulant))
+      
+      # plot:
+      plot <- 
+        ggplot(df, aes(x = stimulant, y = IFNy, shape = infection)) +
+          stat_summary(fun.y = median, fun.ymin = median, fun.ymax = median,
+                       geom = "crossbar", width = 0.8, size = 0.3, 
+                       position = position_dodge(1)) +
+          geom_quasirandom(alpha = 3/4, size = 1, dodge.width = 1, cex = 0.5) +
+          labs(title = paste(var_predict, "vs", var_respons),
+               x = "Stimulant",
+               y = var_predict,
+               shape = var_respons) +
+          scale_y_log10(breaks = (c(10, 100, 1000, 10000))) +
+          theme_light() +
+          theme(legend.position="bottom")
+
+      return(plot)
+  }
+  
+```
+\pagebreak
+
+## Results - Log. regression:
+
+### Exclude TB disease, IGRA+ = 1, IGRA- = 0
+```{r IGRA, no TB cases}
+
+df_no_TB <- df_complete %>%
+  filter(conf_tb == 0)
+
+func_glm_output(data = df_no_TB, 
+                var_predict = "IFNy_med_subtr_noneg_log", 
+                var_respons = "IGRA")
+
+func_plot_jitter(data = df_no_TB, 
+                 var_predict = "IFNy_med_subtr_noneg", 
+                 var_respons = "IGRA")  
+
+```
+\pagebreak
+
+### Exclude TB disease, TST+ = 1, TST- = 0
+```{r TST, no TB cases}
+
+df_no_TB <- df_complete %>%
+  filter(conf_tb == 0) 
+
+func_glm_output(data = df_no_TB, 
+                var_predict = "IFNy_med_subtr_noneg_log", 
+                var_respons = "TST")
+
+func_plot_jitter(data = df_no_TB, 
+                 var_predict = "IFNy_med_subtr_noneg", 
+                 var_respons = "TST")  
+
+```
+\pagebreak
+
+### Exclude TB disease, TST+IGRA+ = 1, TST-IGRA- = 0, rest = NA
+```{r TST_IGRA_double} 
+
+df_no_TB <- df_complete %>%
+  filter(conf_tb == 0)
+
+func_glm_output(data = df_no_TB, 
+                var_predict = "IFNy_med_subtr_noneg_log", 
+                var_respons = "IGRA_TST_double")
+
+func_plot_jitter(data = df_no_TB, 
+                 var_predict = "IFNy_med_subtr_noneg", 
+                 var_respons = "IGRA_TST_double") 
+  
+```
+\pagebreak
+
+### TB disease = 1, not TB disease = 0
+```{r TB vs not TB} 
+
+
+func_glm_output(data = df_complete, 
+                var_predict = "IFNy_med_subtr_noneg_log", 
+                var_respons = "tb_vs_notb")
+
+func_plot_jitter(data = df_complete, 
+                 var_predict = "IFNy_med_subtr_noneg", 
+                 var_respons = "tb_vs_notb") 
+  
+```
+\pagebreak
+
+### Within TB disease cases, Bact. confirmed TB = 1, Clinically diagn. TB = 0, T, rest = NA,  
+```{r conftb_vs_clintb} 
+
+func_glm_output(data = df_complete, 
+                var_predict = "IFNy_med_subtr_noneg_log", 
+                var_respons = "conftb_vs_clintb")
+
+func_plot_jitter(data = df_complete, 
+                 var_predict = "IFNy_med_subtr_noneg", 
+                 var_respons = "conftb_vs_clintb")
+    
+```
+\pagebreak
+
+### TB disease = 1, IGRA+ = 0, rest = NA,  
+```{r IGRApos_vs_conforprob} 
+
+func_glm_output(data = df_complete, 
+                var_predict = "IFNy_med_subtr_noneg_log", 
+                var_respons = "IGRApos_vs_conforprob")
+
+func_plot_jitter(data = df_complete, 
+                 var_predict = "IFNy_med_subtr_noneg", 
+                 var_respons = "IGRApos_vs_conforprob")
+    
+```
+\pagebreak
+
+### TB disease = 1, IGRA- = 0, rest = NA,  
+```{r IGRAneg_vs_conforprob} 
+
+func_glm_output(data = df_complete, 
+                var_predict = "IFNy_med_subtr_noneg_log", 
+                var_respons = "IGRAneg_vs_conforprob")
+
+func_plot_jitter(data = df_complete, 
+                 var_predict = "IFNy_med_subtr_noneg", 
+                 var_respons = "IGRAneg_vs_conforprob")
+    
+```
+\pagebreak
+
+
+### TB disease = 1, IGRA+TST+ = 0, T, rest = NA,  
+```{r IGRA_TST_pos_vs_conforprob} 
+
+func_glm_output(data = df_complete, 
+                var_predict = "IFNy_med_subtr_noneg_log", 
+                var_respons = "IGRA_TST_pos_vs_conforprob")
+
+func_plot_jitter(data = df_complete, 
+                 var_predict = "IFNy_med_subtr_noneg", 
+                 var_respons = "IGRA_TST_pos_vs_conforprob")
+    
+```
+\pagebreak
+
+
+# ROC analysis
+
+## Functions
+```{r Function to prepare data for ROC}
+
+## Function to prepare data for ROC-curve: 
+  func_roc_1stim <- function(data, stim, var_predict, var_respons){
+    
+    # make ROC purely based on IFN-y responses
+    # so do NOT use the logistic regression model predictions
+    # because we want to look purely to the predictive ability of IFN-y 
+    # when classifying infected versus uninfected.
+    
+    df <- data %>%
+      filter(stimulant == stim) %>% 
+      select(-IFNy) %>% # there is a column called IFNy already; remove it
+      rename(IFNy = !!var_predict, infection = !!var_respons) %>%
+      select(IFNy, infection, sex, age_years) %>%
+      na.omit # important part to use this df$.. for the prediction() - function
+    
+    pred        <- prediction(df$IFNy, df$infection)
+    sens_spec   <- performance(pred, measure = "tpr", x.measure = "fpr")
+    auc         <- performance(pred, measure = "auc")
+    cutoff      <- performance(pred, measure = "tpr", x.measure = "cutoff")
+     
+    output <- data.frame(
+      Stimulant = rep(stim),
+      Specificity = sens_spec@x.values[[1]],
+      Sensitivity = sens_spec@y.values[[1]],
+      auc = rep(auc@y.values[[1]]),
+      cutoff = cutoff@x.values[[1]])  
+      
+  return(output)
+  }
+
+```
+\pagebreak
+
+## ROC curve IGRA_TST_double classification, exclude TB disease cases
+```{r roc IGRA IGRA_TST_double}
+
+## Prepare data for ROC curve:
+
+df_no_TB <- df_complete %>%
+  filter(conf_tb == 0)
+
+  pRPFB <- func_roc_1stim(data = df_no_TB, 
+                          stim = "RpfB", 
+                          var_predict = "IFNy_med_subtr_noneg_log", 
+                          var_respons = "IGRA_TST_double")
+  
+  pRPFD <- func_roc_1stim(data = df_no_TB, 
+                          stim = "RpfD", 
+                          var_predict = "IFNy_med_subtr_noneg_log", 
+                          var_respons = "IGRA_TST_double")
+  
+  df_roc <- rbind(pRPFB, pRPFD)
+  write_csv(df_roc, "df_roc_igra_tst_double.csv")
+ 
+## AUC's :
+  
+  df_roc %>%
+    select(Stimulant, auc) %>%
+    unique
+
+## Plot ROC:
+
+ggplot(df_roc) +
+  geom_line(aes(Specificity, Sensitivity, 
+                linetype = Stimulant, color = Stimulant), size = 1) +
+  geom_abline(slope = 1, intercept = 0, color = "darkgrey") +
+  scale_color_manual(values = c(3, 2)) +
+  scale_linetype_manual(values = c(1, 2)) +
+  labs(title = "ROC curve Admissions\n",
+       x = "1-Specificity",
+       y = "Sensitivity") +
+  theme_light()
+
+
+## pick optimal cut off with youdens + select corresponding sensitivity & specificity:
+
+df_roc %>%
+  # youdens index to find optimal cut off,
+  # (note that givin Specificity in original df
+  # is actually not real specificity, but 1-spec):
+  mutate(youdens = Sensitivity + (1-Specificity) - 1,
+         # calculte original value back from neglog-function:
+         cutoff_exp = exp(cutoff)-1) %>%
+  group_by(Stimulant) %>%
+  filter(youdens == max(youdens)) 
+
+```
+\pagebreak
+
+## ROC curve IGRA classification, Exclude TB disease cases
+```{r roc IGRA}
+
+## Prepare data for ROC curve:
+
+df_no_TB <- df_complete %>%
+  filter(conf_tb == 0)
+
+  pRPFB <- func_roc_1stim(data = df_no_TB, 
+                          stim = "RpfB", 
+                          var_predict = "IFNy_med_subtr_noneg_log", 
+                          var_respons = "IGRA")
+  
+  pRPFD <- func_roc_1stim(data = df_no_TB, 
+                          stim = "RpfD", 
+                          var_predict = "IFNy_med_subtr_noneg_log", 
+                          var_respons = "IGRA")
+  
+  df_roc <- rbind(pRPFB, pRPFD)
+  write_csv(df_roc, "df_roc_igra.csv")
+  
+## AUC's :
+  
+  df_roc %>%
+    select(Stimulant, auc) %>%
+    unique
+  
+## Plot ROC:
+
+  ggplot(df_roc) +
+    geom_line(aes(Specificity, Sensitivity,
+                  linetype = Stimulant, color = Stimulant), size = 1) +
+    geom_abline(slope = 1, intercept = 0, color = "darkgrey") +
+    scale_color_manual(values = c(3, 2)) +
+    scale_linetype_manual(values = c(1, 2)) +
+    labs(title = "ROC curve Admissions\n") +
+    theme_light()
+  
+  
+## Pick optimal cut off with youdens + select corresponding sensitivity & specificity:
+
+df_roc %>%
+  # youdens index to find optimal cut off,
+  # (note that givin Specificity in original df
+  # is actually not real specificity, but 1-spec):
+  mutate(youdens = Sensitivity + (1-Specificity) - 1,
+         # calculte original value back from neglog-function:
+         cutoff_exp = exp(cutoff)-1) %>%
+  group_by(Stimulant) %>%
+  filter(youdens == max(youdens)) 
+
+
+```
+\pagebreak
+
+## ROC curve TST classification, Exclude TB disease cases
+```{r roc TST}
+
+## Prepare data for ROC curve:
+
+df_no_TB <- df_complete %>%
+  filter(conf_tb == 0) 
+
+  pPPD <- func_roc_1stim(data = df_no_TB, 
+                         stim = "PPD", 
+                         var_predict = "IFNy_med_subtr_noneg_log", 
+                         var_respons = "TST")
+  
+  pRPFB <- func_roc_1stim(data = df_no_TB, 
+                          stim = "RpfB", 
+                          var_predict = "IFNy_med_subtr_noneg_log", 
+                          var_respons = "TST")
+  
+  pRPFD <- func_roc_1stim(data = df_no_TB, 
+                          stim = "RpfD", 
+                          var_predict = "IFNy_med_subtr_noneg_log", 
+                          var_respons = "TST")
+  
+  df_roc <- rbind(pPPD, pRPFB, pRPFD)
+  write_csv(df_roc, "df_roc_tst.csv")
+  
+## AUC's :
+  
+  df_roc %>%
+    select(Stimulant, auc) %>%
+    unique
+  
+## Plot ROC:
+
+  ggplot(df_roc) +
+    geom_line(aes(Specificity, Sensitivity,
+                  linetype = Stimulant, color = Stimulant), size = 1) +
+    geom_abline(slope = 1, intercept = 0, color = "darkgrey") +
+    scale_color_manual(values = c(3, 2, 1)) +
+    scale_linetype_manual(values = c(1, 2, 3)) +
+    labs(title = "ROC curve Admissions\n") +
+    theme_light()
+  
+  
+## pick optimal cut off with youdens + select corresponding sensitivity & specificity:
+
+df_roc %>%
+  # youdens index to find optimal cut off,
+  # (note that givin Specificity in original df
+  # is actually not real specificity, but 1-spec):
+  mutate(youdens = Sensitivity + (1-Specificity) - 1,
+         # calculte original value back from neglog-function:
+         cutoff_exp = exp(cutoff)-1) %>%
+  group_by(Stimulant) %>%
+  filter(youdens == max(youdens)) 
+  
+
+```
+\pagebreak
+
+## ROC curve TB disease classification, bact. confirmed vs. clinically diagn.
+```{r roc TB disease}
+
+## Prepare data for ROC curve:
+
+
+  pPPD <- func_roc_1stim(data = df_complete, 
+                              stim = "PPD", 
+                              var_predict = "IFNy_med_subtr_noneg_log", 
+                              var_respons = "conftb_vs_clintb")
+  
+  pRPFB <- func_roc_1stim(data = df_complete, 
+                               stim = "RpfB", 
+                               var_predict = "IFNy_med_subtr_noneg_log", 
+                               var_respons = "conftb_vs_clintb")
+  
+  pRPFD <- func_roc_1stim(data = df_complete, 
+                              stim = "RpfD", 
+                              var_predict = "IFNy_med_subtr_noneg_log", 
+                              var_respons = "conftb_vs_clintb")
+  
+  df_roc <- rbind(pPPD, pRPFB, pRPFD)
+  write_csv(df_roc, "df_roc_conftb_vs_clintb.csv")
+  
+## AUC's :
+  
+  df_roc %>%
+    select(Stimulant, auc) %>%
+    unique
+  
+## Plot ROC:
+
+  ggplot(df_roc) +
+    geom_line(aes(Specificity, Sensitivity,
+                  linetype = Stimulant, color = Stimulant), size = 1) +
+    geom_abline(slope = 1, intercept = 0, color = "darkgrey") +
+    scale_color_manual(values = c(3, 2, 1)) +
+    scale_linetype_manual(values = c(1, 2, 3)) +
+    labs(title = "ROC curve Admissions\n") +
+    theme_light()
+  
+  
+## pick optimal cut off with youdens + select corresponding sensitivity & specificity:
+
+df_roc %>%
+  # youdens index to find optimal cut off,
+  # (note that givin Specificity in original df
+  # is actually not real specificity, but 1-spec):
+  mutate(youdens = Sensitivity + (1-Specificity) - 1,
+         # calculte original value back from neglog-function:
+         cutoff_exp = exp(cutoff)-1) %>%
+  group_by(Stimulant) %>%
+  filter(youdens == max(youdens)) 
+  
+
+```
+\pagebreak
+
+## ROC curve TB disease vs not TB disease
+```{r roc TB disease vs not tb disease}
+
+## Prepare data for ROC curve:
+
+  # because here the "1" cases have a LOWER responose, 
+  # the ROC is mirrored!
+  # change the 0-1 coding in the df:
+  
+  df_inverse <- df_complete %>%
+    mutate(tb_vs_notb = ifelse(tb_vs_notb == 1, 0, 
+                               ifelse(tb_vs_notb == 0, 1, NA)))
+
+  pRPFB <- func_roc_1stim(data = df_inverse, 
+                          stim = "RpfB", 
+                          var_predict = "IFNy_med_subtr_noneg_log", 
+                          var_respons = "tb_vs_notb")
+  
+  pRPFD <- func_roc_1stim(data = df_inverse, 
+                          stim = "RpfD", 
+                          var_predict = "IFNy_med_subtr_noneg_log", 
+                          var_respons = "tb_vs_notb")
+  
+  df_roc <- rbind(pRPFB, pRPFD)
+  write_csv(df_roc, "df_roc_tb_vs_notb.csv")
+  
+## AUC's :
+  
+  df_roc %>%
+    select(Stimulant, auc) %>%
+    unique
+  
+## Plot ROC:
+
+  ggplot(df_roc) +
+    geom_line(aes(Specificity, Sensitivity,
+                  linetype = Stimulant, color = Stimulant), size = 1) +
+    geom_abline(slope = 1, intercept = 0, color = "darkgrey") +
+    scale_color_manual(values = c(3, 2)) +
+    scale_linetype_manual(values = c(1, 2)) +
+    labs(title = "ROC curve Admissions\n") +
+    theme_light()
+  
+  
+## pick optimal cut off with youdens + select corresponding sensitivity & specificity:
+
+df_roc %>%
+  # youdens index to find optimal cut off,
+  # (note that givin Specificity in original df
+  # is actually not real specificity, but 1-spec):
+  mutate(youdens = Sensitivity + (1-Specificity) - 1,
+         # calculte original value back from neglog-function:
+         cutoff_exp = exp(cutoff)-1) %>%
+  group_by(Stimulant) %>%
+  filter(youdens == max(youdens)) 
+  
+
+```
+
+## ROC curve TB disease vs IGRA+
+```{r roc TB disease vs IGRA+}
+
+## Prepare data for ROC curve:
+
+  # because here the "1" cases have a LOWER responose, 
+  # the ROC is mirrored!
+  # change the 0-1 coding in the df:
+  
+  data <- df_complete %>%
+    mutate(IGRApos_vs_conforprob = ifelse(IGRApos_vs_conforprob == 1, 0, 
+                                          ifelse(IGRApos_vs_conforprob == 0, 1, NA)))
+
+  pRPFB <- func_roc_1stim(data = data, 
+                               stim = "RpfB", 
+                               var_predict = "IFNy_med_subtr_noneg_log", 
+                               var_respons = "IGRApos_vs_conforprob")
+  
+  pRPFD <- func_roc_1stim(data = data, 
+                              stim = "RpfD", 
+                              var_predict = "IFNy_med_subtr_noneg_log", 
+                              var_respons = "IGRApos_vs_conforprob")
+  
+  df_roc <- rbind(pRPFB, pRPFD)
+  write_csv(df_roc, "df_roc_IGRApos_vs_conforprob.csv")
+  
+## AUC's :
+  
+  df_roc %>%
+    select(Stimulant, auc) %>%
+    unique
+  
+## Plot ROC:
+
+  ggplot(df_roc) +
+    geom_line(aes(Specificity, Sensitivity,
+                  linetype = Stimulant, color = Stimulant), size = 1) +
+    geom_abline(slope = 1, intercept = 0, color = "darkgrey") +
+    scale_color_manual(values = c(3, 2)) +
+    scale_linetype_manual(values = c(1, 2)) +
+    labs(title = "ROC curve Admissions\n") +
+    theme_light()
+  
+  
+## pick optimal cut off with youdens + select corresponding sensitivity & specificity:
+
+df_roc %>%
+  # youdens index to find optimal cut off,
+  # (note that givin Specificity in original df
+  # is actually not real specificity, but 1-spec):
+  mutate(youdens = Sensitivity + (1-Specificity) - 1,
+         # calculte original value back from neglog-function:
+         cutoff_exp = exp(cutoff)-1) %>%
+  group_by(Stimulant) %>%
+  filter(youdens == max(youdens)) 
+  
+
+```
+\pagebreak
+
+## ROC curve TB disease vs IGRA+TST+
+```{r roc TB disease vs IGRA+TST+}
+
+## Prepare data for ROC curve:
+
+
+  pPPD <- func_roc_1stim(data = df_complete, 
+                              stim = "PPD", 
+                              var_predict = "IFNy_med_subtr_noneg_log", 
+                              var_respons = "IGRA_TST_pos_vs_conforprob")
+  
+  pRPFB <- func_roc_1stim(data = df_complete, 
+                               stim = "RpfB", 
+                               var_predict = "IFNy_med_subtr_noneg_log", 
+                               var_respons = "IGRA_TST_pos_vs_conforprob")
+  
+  pRPFD <- func_roc_1stim(data = df_complete, 
+                              stim = "RpfD", 
+                              var_predict = "IFNy_med_subtr_noneg_log", 
+                              var_respons = "IGRA_TST_pos_vs_conforprob")
+  
+  df_roc <- rbind(pPPD, pRPFB, pRPFD)
+  write_csv(df_roc, "df_roc_tst.csv")
+  
+## AUC's :
+  
+  df_roc %>%
+    select(Stimulant, auc) %>%
+    unique
+  
+## Plot ROC:
+
+  ggplot(df_roc) +
+    geom_line(aes(Specificity, Sensitivity,
+                  linetype = Stimulant, color = Stimulant), size = 1) +
+    geom_abline(slope = 1, intercept = 0, color = "darkgrey") +
+    scale_color_manual(values = c(3, 2, 1)) +
+    scale_linetype_manual(values = c(1, 2, 3)) +
+    labs(title = "ROC curve Admissions\n") +
+    theme_light()
+  
+  
+## pick optimal cut off with youdens + select corresponding sensitivity & specificity:
+
+df_roc %>%
+  # youdens index to find optimal cut off,
+  # (note that givin Specificity in original df
+  # is actually not real specificity, but 1-spec):
+  mutate(youdens = Sensitivity + (1-Specificity) - 1,
+         # calculte original value back from neglog-function:
+         cutoff_exp = exp(cutoff)-1) %>%
+  group_by(Stimulant) %>%
+  filter(youdens == max(youdens)) 
+  
+
+```
+\pagebreak
+
+## Rpf screening performance for TB infection
+Considering IGRA as gold standard.
+Compare with TST.
+```{r compare screening performance RPF and TST}
+
+# Consult ROC-plot with IGRA as infection classification
+# for cut-offs (cu)
+
+co_rpfb <- 33.9300 # note that this is not the log. concentration, but the actual pg/ml
+co_rpfd <- 67.0194 # note that this is not the log. concentration, but the actual pg/ml
+
+df_rpfb_class <- df_complete %>% 
+  filter(stimulant == "RpfB") %>% # very important!
+  mutate(rpfb = ifelse (IFNy_med_subtr_noneg >= co_rpfb, 1, 0)) %>%
+  select(id_sample, rpfb)
+
+df_rpfd_class <- df_complete %>% 
+  filter(stimulant == "RpfD") %>% # very important!
+  mutate(rpfd = ifelse (IFNy_med_subtr_noneg >= co_rpfd, 1, 0)) %>%
+  select(id_sample, rpfd)
+
+
+df_rpf_class_included <- df_complete %>%
+  full_join(df_rpfb_class) %>%
+  full_join(df_rpfd_class)
+
+df_rpf_class_included_no_TB <- df_rpf_class_included %>%
+  filter(conf_tb == 0) 
+
+# overview of RpfB vs. IGRA
+df_rpf_class_included_no_TB %>%
+  filter(stimulant == "MED") %>%
+  select(IGRA, rpfb) %>%
+  table() %>%
+  addmargins()
+
+# Sensitivity: true pos / (true pos + false neg)
+  24 / (24 + 9)
+# Specificity: true neg / (true neg + false pos)
+  12 / (12 + 1)
+
+# overview of RpfD vs. IGRA
+df_rpf_class_included_no_TB %>%
+  filter(stimulant == "MED") %>%
+  select(IGRA, rpfd) %>%
+  table() %>%
+  addmargins()
+
+# Sensitivity: true pos / (true pos + false neg)
+  33 / (33 + 10)
+# Specificity: true neg / (true neg + false pos)
+  13 / (13 + 5)
+
+# overview of TST vs. IGRA
+df_rpf_class_included_no_TB %>%
+  filter(stimulant == "MED") %>%
+  select(IGRA, TST) %>%
+  table() %>%
+  addmargins()
+
+# Sensitivity: true pos / (true pos + false neg)
+  22 / (22 + 12)
+# Specificity: true neg / (true neg + false pos)
+  12 / (12 + 4)
+
+    
+## Venn diagram:
+
+# Rpf B
+df_venn_rpfb <- df_rpf_class_included_no_TB %>%
+  filter(stimulant == "MED") %>%
+  mutate(igra_tst_rpfb = ifelse(IGRA == 1 & TST == 0 & rpfb == 0, "igra", 
+                                ifelse(IGRA == 0 & TST == 1 & rpfb == 0, "tst",
+                                       ifelse(IGRA == 0 & TST == 0 & rpfb == 1, "rpfb",
+                                              ifelse(IGRA == 1 & TST == 1 & rpfb == 0, "igra_tst",
+                                                     ifelse(IGRA == 1 & TST == 0 & rpfb == 1, "igra_rpfb",
+                                                            ifelse(IGRA == 0 & TST == 1 & rpfb == 1, "tst_rpfb",
+                                                                   ifelse(IGRA == 1 & TST == 1 & rpfb == 1, "igra_tst_rpfb", NA))))))))
+
+df_venn_rpfb %>%
+  select(igra_tst_rpfb) %>%
+  table() %>% addmargins() %>% t() %>% t()
+
+
+# Rpf D
+df_venn_rpfd <- df_rpf_class_included_no_TB %>%
+  filter(stimulant == "MED") %>%
+  mutate(igra_tst_rpfd = ifelse(IGRA == 1 & TST == 0 & rpfd == 0, "igra", 
+                                ifelse(IGRA == 0 & TST == 1 & rpfd == 0, "tst",
+                                       ifelse(IGRA == 0 & TST == 0 & rpfd == 1, "rpfd",
+                                              ifelse(IGRA == 1 & TST == 1 & rpfd == 0, "igra_tst",
+                                                     ifelse(IGRA == 1 & TST == 0 & rpfd == 1, "igra_rpfd",
+                                                            ifelse(IGRA == 0 & TST == 1 & rpfd == 1, "tst_rpfd",
+                                                                   ifelse(IGRA == 1 & TST == 1 & rpfd == 1, "igra_tst_rpfd", NA))))))))
+
+df_venn_rpfd %>%
+  select(igra_tst_rpfd) %>%
+  table() %>% addmargins() %>% t() %>% t()
+
+```
